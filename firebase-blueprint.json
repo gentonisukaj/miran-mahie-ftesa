@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "rsvp": {
+      "title": "RSVP",
+      "description": "Konfirmimi i pjesëmarrjes për dasmën.",
+      "type": "object",
+      "properties": {
+        "firstName": {
+          "type": "string",
+          "description": "Emri i mysafirit"
+        },
+        "lastName": {
+          "type": "string",
+          "description": "Mbiemri i mysafirit"
+        },
+        "guestsCount": {
+          "type": "integer",
+          "description": "Numri i personave"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Koha e konfirmimit"
+        }
+      },
+      "required": ["firstName", "lastName", "guestsCount", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/rsvps/{rsvpId}": {
+      "schema": "rsvp",
+      "description": "Lista e mysafirëve të konfirmuar"
+    }
+  }
+}
