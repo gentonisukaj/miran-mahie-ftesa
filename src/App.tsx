@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { 
   Heart, 
   MapPin, 
   Calendar, 
   Clock, 
-  ChevronRight, 
-  ChevronLeft, 
   CheckCircle2, 
   Users, 
   Lock,
@@ -27,11 +25,6 @@ import {
 } from 'firebase/firestore';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 // --- Types ---
 interface RSVP {
@@ -81,12 +74,80 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+// --- Error Boundary ---
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: any;
+}
+
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = { hasError: false, error: null };
+  public props: ErrorBoundaryProps;
+
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.props = props;
+  }
+
+  static getDerivedStateFromError(error: any): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let errorMessage = "Pati një gabim të papritur.";
+      try {
+        const parsed = JSON.parse(this.state.error?.message || "{}");
+        if (parsed.error) {
+          errorMessage = `Gabim në Firestore: ${parsed.error}`;
+        }
+      } catch (e) {
+        // Not a JSON error
+      }
+      return (
+        <div className="min-h-screen bg-sand-900 flex items-center justify-center p-4 text-center">
+          <div className="bg-sand-800 p-12 rounded-sm border border-sand-700 max-w-lg w-full space-y-6 shadow-2xl">
+            <Lock className="mx-auto text-red-400" size={64} />
+            <h2 className="text-3xl font-serif text-sand-50">Ups! Diçka shkoi gabim.</h2>
+            <p className="text-sand-300">{errorMessage}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="bg-sand-100 text-sand-900 px-8 py-3 rounded-sm font-bold uppercase tracking-widest hover:bg-white transition-all"
+            >
+              Rifresko Faqen
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 // --- Components ---
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <WeddingApp />
+    </ErrorBoundary>
+  );
+}
+
+function WeddingApp() {
   const [formData, setFormData] = useState({ firstName: '', lastName: '', guestsCount: 1 });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
   const [pin, setPin] = useState('');
   const [rsvps, setRsvps] = useState<RSVP[]>([]);
@@ -115,7 +176,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (showAdmin && user && user.email === 'ukajgentonis88@gmail.com') {
+    if (showAdmin && user && user.email === 'ukajgentonis88@gmail.com' && user.emailVerified) {
       const q = query(collection(db, 'rsvps'), orderBy('createdAt', 'desc'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RSVP));
@@ -136,15 +197,24 @@ export default function App() {
       alert("Afati për konfirmim ka kaluar.");
       return;
     }
+    if (formData.guestsCount < 1 || formData.guestsCount > 20) {
+      alert("Numri i personave duhet të jetë mes 1 dhe 20.");
+      return;
+    }
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       await addDoc(collection(db, 'rsvps'), {
-        ...formData,
+        firstName: formData.firstName.trim(),
+        lastName: formData.lastName.trim(),
+        guestsCount: formData.guestsCount,
         createdAt: new Date().toISOString()
       });
       setIsSubmitted(true);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'rsvps');
+      setFormData({ firstName: '', lastName: '', guestsCount: 1 });
+    } catch (error: any) {
+      console.error("RSVP submission failed", error);
+      setSubmitError("Pati një problem gjatë dërgimit. Ju lutem provoni përsëri.");
     } finally {
       setIsSubmitting(false);
     }
@@ -153,19 +223,24 @@ export default function App() {
   const handleAdminLogin = async () => {
     if (pin === '2003') {
       try {
-        if (!user) {
+        let currentUser = user;
+        if (!currentUser) {
           const provider = new GoogleAuthProvider();
-          await signInWithPopup(auth, provider);
+          const result = await signInWithPopup(auth, provider);
+          currentUser = result.user;
         }
         
         // Explicitly check if the logged in user is the organizer
-        if (auth.currentUser?.email === "ukajgentonis88@gmail.com") {
+        if (currentUser?.email === "ukajgentonis88@gmail.com" && currentUser?.emailVerified) {
           setShowAdmin(true);
         } else {
           alert("Vetëm organizatori ka autorizim për të hyrë në këtë panel.");
           await auth.signOut();
         }
-      } catch (error) {
+      } catch (error: any) {
+        if (error.code !== 'auth/popup-closed-by-user') {
+          alert("Dështoi identifikimi. Ju lutem provoni përsëri.");
+        }
         console.error("Login failed", error);
       }
     } else {
@@ -396,12 +471,19 @@ export default function App() {
                         value={formData.guestsCount || ''}
                         onChange={e => {
                           const val = parseInt(e.target.value);
-                          setFormData({...formData, guestsCount: isNaN(val) ? 0 : val});
+                          if (isNaN(val)) {
+                            setFormData({...formData, guestsCount: 0});
+                          } else {
+                            setFormData({...formData, guestsCount: val});
+                          }
                         }}
                         className="w-full bg-sand-900/50 border border-sand-700 p-5 pl-16 rounded-sm focus:outline-none focus:border-sand-400 transition-all text-xl"
                       />
                     </div>
                   </div>
+                  {submitError && (
+                    <p className="text-red-400 text-sm font-medium text-center">{submitError}</p>
+                  )}
                   <button 
                     disabled={isSubmitting}
                     className="w-full bg-sand-100 text-sand-900 p-6 rounded-sm font-bold text-xl hover:bg-white transition-all shadow-2xl disabled:opacity-50 active:scale-[0.99] uppercase tracking-widest"
